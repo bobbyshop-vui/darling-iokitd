@@ -27,7 +27,33 @@
 
 IOSurfaceRoot::IOSurfaceRoot()
 {
-	m_display = eglGetDisplay(IODisplayConnectX11::getDisplay());
+	Display* xDisplay = IODisplayConnectX11::getDisplay();
+
+	// Without an X connection (launchd may start iokitd without DISPLAY),
+	// eglGetDisplay(NULL) hands back Mesa's default platform; on a Wayland
+	// session that is Wayland with a NULL wl_display, and eglInitialize
+	// crashed. iokitd died on every launch and every IOKit request from apps
+	// waited forever. Run without IOSurface GL support instead.
+	if (xDisplay == NULL)
+	{
+		m_display = EGL_NO_DISPLAY;
+		return;
+	}
+
+	// Ask for the X11 platform explicitly. eglGetDisplay() lets Mesa pick the
+	// platform from EGL_PLATFORM or the session type, so on a Wayland session
+	// it treated the Display* as a wl_display and crashed in eglInitialize
+	// (same fix as CGL in src/frameworks/OpenGL/OpenGL.c).
+	typedef EGLDisplay (*GetPlatformDisplayFn)(EGLenum, void*, const EGLint*);
+	GetPlatformDisplayFn getPlatformDisplay = (GetPlatformDisplayFn) eglGetProcAddress("eglGetPlatformDisplay");
+	if (getPlatformDisplay == NULL)
+		getPlatformDisplay = (GetPlatformDisplayFn) eglGetProcAddress("eglGetPlatformDisplayEXT");
+
+	m_display = EGL_NO_DISPLAY;
+	if (getPlatformDisplay != NULL)
+		m_display = getPlatformDisplay(0x31D5 /* EGL_PLATFORM_X11_KHR */, xDisplay, NULL);
+	if (m_display == EGL_NO_DISPLAY)
+		m_display = eglGetDisplay(xDisplay);
 
     if (m_display == EGL_NO_DISPLAY)
         return;
